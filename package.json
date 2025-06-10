@@ -1,0 +1,68 @@
+{
+  "name": "aws-command-schemas",
+  "version": "1.0.0",
+  "description": "Dynamically extracted AWS SDK command parameters from official boto3 service definitions",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "extract": "node src/extractor.js",
+    "validate": "node src/validator.js",
+    "test": "node src/test.js",
+    "clean": "rm -rf aws-schemas/ botocore/",
+    "dev": "node --watch src/extractor.js",
+    "lint": "eslint src/",
+    "format": "prettier --write src/"
+  },
+  "keywords": [
+    "aws",
+    "sdk",
+    "boto3",
+    "botocore", 
+    "schemas",
+    "parameters",
+    "commands",
+    "api",
+    "definitions",
+    "elasticsearch",
+    "elasticache",
+    "ec2",
+    "s3",
+    "lambda",
+    "dynamodb"
+  ],
+  "author": {
+    "name": "Kamran Biglari",
+    "email": "kamran@kamranonline.uk",
+    "url": "https://github.com/kamranbiglari"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kamranbiglari/aws-command-schemas.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kamranbiglari/aws-sdk-schema-extractor/issues"
+  },
+  "homepage": "https://github.com/kamranbiglari/aws-sdk-schema-extractor#readme",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "src/",
+    "aws-schemas/",
+    "README.md",
+    "LICENSE"
+  ],
+  "devDependencies": {
+    "eslint": "^8.50.0",
+    "prettier": "^3.0.0"
+  },
+  "dependencies": {},
+  "publishConfig": {
+    "access": "public"
+  },
+  "funding": {
+    "type": "github",
+    "url": "https://github.com/sponsors/kamranbiglari"
+  }
+}

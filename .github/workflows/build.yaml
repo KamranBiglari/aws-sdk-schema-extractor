@@ -1,0 +1,252 @@
+name: Extract AWS Schemas
+
+on:
+  # Run daily to check for updates
+  schedule:
+    - cron: '0 6 * * *'  # 6 AM UTC daily
+  
+  # Allow manual triggering
+  workflow_dispatch:
+  
+  # Run on pushes to main (for testing)
+  push:
+    branches: [ main ]
+    paths: 
+      - 'src/**'
+      - 'package.json'
+      - '.github/workflows/**'
+
+jobs:
+  extract-schemas:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: npm ci
+    
+    - name: Clone botocore repository
+      run: |
+        echo "🔄 Cloning latest botocore..."
+        git clone --depth 1 https://github.com/boto/botocore.git
+        echo "📋 Botocore version: $(cd botocore && git rev-parse --short HEAD)"
+    
+    - name: Check if botocore has updates
+      id: check-updates
+      run: |
+        # Get current botocore commit from our record
+        CURRENT_COMMIT=""
+        if [ -f ".botocore-version" ]; then
+          CURRENT_COMMIT=$(cat .botocore-version)
+        fi
+        
+        # Get latest botocore commit
+        cd botocore
+        LATEST_COMMIT=$(git rev-parse HEAD)
+        cd ..
+        
+        echo "Current: $CURRENT_COMMIT"
+        echo "Latest: $LATEST_COMMIT"
+        
+        if [ "$CURRENT_COMMIT" != "$LATEST_COMMIT" ]; then
+          echo "🔄 Botocore has updates!"
+          echo "has_updates=true" >> $GITHUB_OUTPUT
+          echo "latest_commit=$LATEST_COMMIT" >> $GITHUB_OUTPUT
+          echo "commit_short=$(echo $LATEST_COMMIT | cut -c1-8)" >> $GITHUB_OUTPUT
+        else
+          echo "✅ No botocore updates"
+          echo "has_updates=false" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Extract AWS schemas
+      if: steps.check-updates.outputs.has_updates == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+      run: |
+        echo "🚀 Starting schema extraction..."
+        export BOTOCORE_DATA_PATH=./botocore/botocore/data
+        npm run extract
+        
+        echo "📊 Extraction statistics:"
+        if [ -f "aws-schemas/index.json" ]; then
+          echo "Services: $(jq -r '.stats.totalServices' aws-schemas/index.json)"
+          echo "Operations: $(jq -r '.stats.totalOperations' aws-schemas/index.json)"
+          echo "Successful: $(jq -r '.stats.successfulExtractions' aws-schemas/index.json)"
+        fi
+    
+    - name: Validate extracted schemas
+      if: steps.check-updates.outputs.has_updates == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+      run: |
+        echo "🔍 Validating extracted schemas..."
+        npm run validate
+    
+    - name: Update botocore version record
+      if: steps.check-updates.outputs.has_updates == 'true'
+      run: |
+        echo "${{ steps.check-updates.outputs.latest_commit }}" > .botocore-version
+        echo "📝 Updated botocore version record"
+    
+    - name: Generate release notes
+      if: steps.check-updates.outputs.has_updates == 'true'
+      id: release-notes
+      run: |
+        echo "📝 Generating release notes..."
+        
+        RELEASE_DATE=$(date -u +"%Y-%m-%d")
+        BOTOCORE_COMMIT="${{ steps.check-updates.outputs.commit_short }}"
+        
+        # Count services and commands
+        SERVICES_COUNT=$(jq -r '.stats.totalServices' aws-schemas/index.json)
+        OPERATIONS_COUNT=$(jq -r '.stats.totalOperations' aws-schemas/index.json)
+        SUCCESSFUL_COUNT=$(jq -r '.stats.successfulExtractions' aws-schemas/index.json)
+        
+        # Create release notes
+        cat > release-notes.md << EOF
+        # AWS Schemas Update - $RELEASE_DATE
+        
+        🔄 **Automated update from latest botocore service definitions**
+        
+        ## 📊 Statistics
+        - **Services**: $SERVICES_COUNT
+        - **Total Operations**: $OPERATIONS_COUNT  
+        - **Successfully Extracted**: $SUCCESSFUL_COUNT
+        - **Botocore Version**: \`$BOTOCORE_COMMIT\`
+        
+        ## 📁 What's Included
+        - Individual JSON files for each AWS command
+        - Organized by service folders (\`aws-schemas/servicename/\`)
+        - Service summaries and main index
+        - Parameter types and requirement information
+        - AWS documentation preserved
+        
+        ## 🚀 Usage
+        \`\`\`bash
+        # Download and extract
+        curl -L https://github.com/kamranbiglari/aws-sdk-schema-extractor/releases/download/v$RELEASE_DATE/aws-schemas.zip -o schemas.zip
+        unzip schemas.zip
+        
+        # Use in your project
+        const schema = require('./aws-schemas/elasticache/AddTagsToResourceCommand.json');
+        console.log(schema.requiredParameters);
+        \`\`\`
+        
+        ---
+        *Generated automatically from botocore commit \`$BOTOCORE_COMMIT\`*
+        EOF
+        
+        echo "release_date=$RELEASE_DATE" >> $GITHUB_OUTPUT
+        echo "📄 Release notes created"
+    
+    - name: Create schemas archive
+      if: steps.check-updates.outputs.has_updates == 'true'
+      run: |
+        echo "📦 Creating schemas archive..."
+        zip -r aws-schemas.zip aws-schemas/
+        echo "✅ Archive created: aws-schemas.zip"
+    
+    - name: Commit updated schemas
+      if: steps.check-updates.outputs.has_updates == 'true'
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        
+        git add aws-schemas/ .botocore-version
+        
+        if git diff --staged --quiet; then
+          echo "No changes to commit"
+        else
+          git commit -m "🔄 Update AWS schemas from botocore ${{ steps.check-updates.outputs.commit_short }}
+          
+          - Services: $(jq -r '.stats.totalServices' aws-schemas/index.json)
+          - Operations: $(jq -r '.stats.totalOperations' aws-schemas/index.json)
+          - Successful extractions: $(jq -r '.stats.successfulExtractions' aws-schemas/index.json)
+          
+          Auto-generated from botocore@${{ steps.check-updates.outputs.commit_short }}"
+          
+          git push
+        fi
+    
+    - name: Create GitHub Release
+      if: steps.check-updates.outputs.has_updates == 'true'
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v${{ steps.release-notes.outputs.release_date }}
+        name: AWS Schemas - ${{ steps.release-notes.outputs.release_date }}
+        body_path: release-notes.md
+        files: |
+          aws-schemas.zip
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Update README stats
+      if: steps.check-updates.outputs.has_updates == 'true'
+      run: |
+        echo "📊 Updating README with latest stats..."
+        
+        SERVICES_COUNT=$(jq -r '.stats.totalServices' aws-schemas/index.json)
+        OPERATIONS_COUNT=$(jq -r '.stats.totalOperations' aws-schemas/index.json)
+        LAST_UPDATE=$(date -u +"%Y-%m-%d %H:%M UTC")
+        
+        # Update README badges/stats (you can customize this)
+        sed -i "s/Total Services: [0-9]*/Total Services: $SERVICES_COUNT/g" README.md
+        sed -i "s/Total Operations: [0-9]*/Total Operations: $OPERATIONS_COUNT/g" README.md
+        
+        # Commit README updates
+        if ! git diff --quiet README.md; then
+          git add README.md
+          git commit -m "📊 Update README stats - $SERVICES_COUNT services, $OPERATIONS_COUNT operations"
+          git push
+        fi
+    
+    - name: Notify on failure
+      if: failure()
+      run: |
+        echo "❌ Schema extraction failed!"
+        echo "Please check the logs and fix any issues."
+        
+        # Optional: Send notification (Slack, Discord, etc.)
+        # curl -X POST -H 'Content-type: application/json' \
+        #   --data '{"text":"❌ AWS Schema extraction failed in repository"}' \
+        #   ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  # Optional: Test schemas in different environments
+  test-schemas:
+    needs: extract-schemas
+    if: needs.extract-schemas.outputs.has_updates == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18, 20]
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Setup Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: npm ci
+    
+    - name: Test schema loading
+      run: |
+        echo "🧪 Testing schema loading on Node.js ${{ matrix.node-version }}..."
+        npm run test
+    
+    - name: Validate schema format
+      run: |
+        echo "✅ Validating schema format consistency..."
+        npm run validate
