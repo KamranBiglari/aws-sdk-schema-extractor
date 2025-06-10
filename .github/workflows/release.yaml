@@ -107,39 +107,59 @@ jobs:
         SERVICES_COUNT=$(jq -r '.stats.totalServices' aws-schemas/index.json)
         OPERATIONS_COUNT=$(jq -r '.stats.totalOperations' aws-schemas/index.json)
         SUCCESSFUL_COUNT=$(jq -r '.stats.successfulExtractions' aws-schemas/index.json)
+        ARCHIVE_SIZE=$(du -h aws-schemas.zip | cut -f1)
         
         # Create release notes
         cat > release-notes.md << EOF
-        # AWS Schemas Update - $RELEASE_DATE
+        # AWS Command Schemas - $RELEASE_DATE
         
-        🔄 **Automated update from latest botocore service definitions**
+        🚀 **Clean schemas archive with ONLY the schema files**
         
         ## 📊 Statistics
         - **Services**: $SERVICES_COUNT
         - **Total Operations**: $OPERATIONS_COUNT  
         - **Successfully Extracted**: $SUCCESSFUL_COUNT
+        - **Archive Size**: $ARCHIVE_SIZE
         - **Botocore Version**: \`$BOTOCORE_COMMIT\`
         
         ## 📁 What's Included
-        - Individual JSON files for each AWS command
-        - Organized by service folders (\`aws-schemas/servicename/\`)
-        - Service summaries and main index
-        - Parameter types and requirement information
-        - AWS documentation preserved
+        \`\`\`
+        aws-schemas.zip contains:
+        ├── index.json                    # Main service index
+        ├── README.md                     # Usage documentation  
+        ├── elasticache/                  # ElastiCache commands
+        │   ├── _service-summary.json    # Service overview
+        │   ├── AddTagsToResourceCommand.json
+        │   └── ...
+        ├── ec2/                          # EC2 commands
+        │   ├── _service-summary.json
+        │   ├── RunInstancesCommand.json
+        │   └── ...
+        └── s3/                           # S3 commands
+            ├── _service-summary.json
+            ├── PutObjectCommand.json
+            └── ...
+        \`\`\`
         
-        ## 🚀 Usage
+        ## 🚀 Quick Usage
         \`\`\`bash
         # Download and extract
-        curl -L https://github.com/kamranbiglari/aws-sdk-schema-extractor/releases/download/v$RELEASE_DATE/aws-schemas.zip -o schemas.zip
+        curl -L https://github.com/yourusername/aws-command-schemas/releases/download/v$RELEASE_DATE/aws-schemas.zip -o schemas.zip
         unzip schemas.zip
         
         # Use in your project
-        const schema = require('./aws-schemas/elasticache/AddTagsToResourceCommand.json');
-        console.log(schema.requiredParameters);
+        const schema = require('./elasticache/AddTagsToResourceCommand.json');
+        console.log(schema.requiredParameters); // ["ResourceName", "Tags"]
         \`\`\`
         
+        ## 🎯 Clean Distribution
+        - ✅ **No source code** - Only schema files
+        - ✅ **No dependencies** - Pure JSON data
+        - ✅ **Organized structure** - By AWS service
+        - ✅ **Ready to use** - Drop into any project
+        
         ---
-        *Generated automatically from botocore commit \`$BOTOCORE_COMMIT\`*
+        *Generated from botocore \`$BOTOCORE_COMMIT\` • Archive contains only schema files*
         EOF
         
         echo "release_date=$RELEASE_DATE" >> $GITHUB_OUTPUT
@@ -148,9 +168,22 @@ jobs:
     - name: Create schemas archive
       if: steps.check-updates.outputs.has_updates == 'true'
       run: |
-        echo "📦 Creating schemas archive..."
-        zip -r aws-schemas.zip aws-schemas/
-        echo "✅ Archive created: aws-schemas.zip"
+        echo "📦 Creating clean schemas archive..."
+        
+        # Create archive with ONLY aws-schemas/ folder contents
+        cd aws-schemas
+        zip -r ../aws-schemas.zip .
+        cd ..
+        
+        # Verify archive contents
+        echo "📋 Archive contents:"
+        unzip -l aws-schemas.zip | head -20
+        
+        # Get archive size
+        ARCHIVE_SIZE=$(du -h aws-schemas.zip | cut -f1)
+        echo "📊 Archive size: $ARCHIVE_SIZE"
+        
+        echo "✅ Clean schemas archive created: aws-schemas.zip"
     
     - name: Commit updated schemas
       if: steps.check-updates.outputs.has_updates == 'true'
@@ -158,19 +191,16 @@ jobs:
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
         
-        git add aws-schemas/ .botocore-version
+        echo "📝 Only committing version tracking file (.botocore-version)"
+        echo "📦 aws-schemas/ will be distributed via releases only"
+        
+        # Only commit version tracking file
+        git add .botocore-version
         
         if git diff --staged --quiet; then
-          echo "No changes to commit"
+          echo "No version changes to commit"
         else
-          git commit -m "🔄 Update AWS schemas from botocore ${{ steps.check-updates.outputs.commit_short }}
-          
-          - Services: $(jq -r '.stats.totalServices' aws-schemas/index.json)
-          - Operations: $(jq -r '.stats.totalOperations' aws-schemas/index.json)
-          - Successful extractions: $(jq -r '.stats.successfulExtractions' aws-schemas/index.json)
-          
-          Auto-generated from botocore@${{ steps.check-updates.outputs.commit_short }}"
-          
+          git commit -m "🔄 Update botocore version to ${{ steps.check-updates.outputs.commit_short }}"
           git push
         fi
     
